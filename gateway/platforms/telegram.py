@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Any
 logger = logging.getLogger(__name__)
 
 try:
-    from telegram import Update, Bot, Message
+    from telegram import Update, Bot, Message, InlineKeyboardMarkup, InlineKeyboardButton
     from telegram.ext import (
         Application,
         CommandHandler,
@@ -761,6 +761,18 @@ class TelegramAdapter(BasePlatformAdapter):
             
             message_ids = []
             thread_id = metadata.get("thread_id") if metadata else None
+
+            # Build inline keyboard if buttons provided in metadata.
+            # Format: {"buttons": [[{"text": "Label", "url": "https://..."}], ...]}
+            # Each inner list is a row of buttons.
+            reply_markup = None
+            raw_buttons = metadata.get("buttons") if metadata else None
+            if raw_buttons and TELEGRAM_AVAILABLE:
+                keyboard = [
+                    [InlineKeyboardButton(btn["text"], url=btn["url"]) for btn in row]
+                    for row in raw_buttons
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
             
             try:
                 from telegram.error import NetworkError as _NetErr
@@ -776,6 +788,8 @@ class TelegramAdapter(BasePlatformAdapter):
                 should_thread = self._should_thread_reply(reply_to, i)
                 reply_to_id = int(reply_to) if should_thread else None
                 effective_thread_id = int(thread_id) if thread_id else None
+                # Only attach buttons to the last chunk
+                chunk_markup = reply_markup if (i == len(chunks) - 1) else None
 
                 msg = None
                 for _send_attempt in range(3):
@@ -788,6 +802,7 @@ class TelegramAdapter(BasePlatformAdapter):
                                 parse_mode=ParseMode.MARKDOWN_V2,
                                 reply_to_message_id=reply_to_id,
                                 message_thread_id=effective_thread_id,
+                                reply_markup=chunk_markup,
                             )
                         except Exception as md_error:
                             # Markdown parsing failed, try plain text
@@ -800,6 +815,7 @@ class TelegramAdapter(BasePlatformAdapter):
                                     parse_mode=None,
                                     reply_to_message_id=reply_to_id,
                                     message_thread_id=effective_thread_id,
+                                    reply_markup=chunk_markup,
                                 )
                             else:
                                 raise
