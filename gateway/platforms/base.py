@@ -807,6 +807,41 @@ class BasePlatformAdapter(ABC):
         return media, cleaned
 
     @staticmethod
+    def extract_buttons(content: str) -> Tuple[Optional[List[List[Dict[str, str]]]], str]:
+        """
+        Extract inline keyboard button definitions from response text.
+
+        Looks for a BUTTONS: marker followed by JSON. Two formats supported:
+
+            BUTTONS:[{"text":"Label","url":"https://..."}]
+            (flat list = single row of buttons)
+
+            BUTTONS:[[{"text":"A","url":"..."},{"text":"B","url":"..."}],[...]]
+            (nested list = multiple rows)
+
+        The marker is stripped from the returned content so it never
+        reaches the user. Returns None if no BUTTONS marker is found.
+        """
+        import json as _json
+        pattern = re.compile(r'BUTTONS:(\[.*?\])\s*', re.DOTALL)
+        match = pattern.search(content)
+        if not match:
+            return None, content
+
+        raw = match.group(1)
+        cleaned = pattern.sub('', content).strip()
+
+        try:
+            parsed = _json.loads(raw)
+            # Normalise flat list → list of rows
+            if parsed and isinstance(parsed[0], dict):
+                parsed = [parsed]
+            return parsed, cleaned
+        except Exception:
+            # Malformed JSON — leave content untouched, return no buttons
+            return None, content
+
+    @staticmethod
     def extract_local_files(content: str) -> Tuple[List[str], str]:
         """
         Detect bare local file paths in response text for native media delivery.
@@ -1112,7 +1147,13 @@ class BasePlatformAdapter(ABC):
             if response:
                 # Extract MEDIA:<path> tags (from TTS tool) before other processing
                 media_files, response = self.extract_media(response)
-                
+
+                # Extract inline keyboard buttons before further processing
+                buttons, response = self.extract_buttons(response)
+                if buttons:
+                    _thread_metadata = _thread_metadata or {}
+                    _thread_metadata["buttons"] = buttons
+
                 # Extract image URLs and send them as native platform attachments
                 images, text_content = self.extract_images(response)
                 # Strip any remaining internal directives from message body (fixes #1561)
